@@ -1,0 +1,184 @@
+---
+title: "Covid19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(deSolve)
+library(ggplot2)
+library(dplyr)
+```
+
+```{r}
+system <- function(t, y, parms) {
+  
+  with(as.list(c(y, parms)),{
+    
+    # Parameter manipulations
+    gamma <- 1/Ip
+    delta <- 1/Rp
+
+    beta <- R0 * gamma / N
+
+    # Change in Susceptibles
+    dS <- - beta * S * I + delta * R
+
+    # Change in Infecteds
+    dI <- beta * S * I - gamma * I
+
+    # Change in Recovereds
+    dR <- gamma * I - delta * R
+
+    return(list(c(dS, dI, dR)))
+    
+  })
+}
+```
+
+
+```{r}
+times <- seq(from = 1, to = 55, by = 1)
+state = c(S = 200000, I = 444, R = 28)
+parms <- c(R0 = 2.7, Ip = 7, Rp = 14, N = sum(state))
+soln <- deSolve::lsoda(y = state, times = times, func = system, parms = parms)
+```
+
+```{r}
+head(soln)
+```
+
+```{r}
+ggplot(data = as.data.frame(soln), aes(x=time)) +
+  geom_line(aes(y=S), color="blue") +
+  geom_line(aes(y=I), color="orange") +
+  geom_line(aes(y=R), color="green")
+```
+
+
+```{r}
+f_minimise <- function(params, system, times, y, lambda){
+  
+  i_state <- c(S = params[4], I = 444, R = 28)
+  parms <- c(R0 = params[1], Ip = params[2], Rp = params[3], N = sum(i_state))
+  soln <- as.data.frame(deSolve::lsoda(y = i_state, times = times, func = system, parms = parms))
+  
+  loss <- sum((soln$I - y$I)^2 + (soln$R - y$R)^2) + lambda*sum(abs(params))
+  
+  return(loss)
+}
+
+y <- read.csv("covid19_china.csv")
+
+coefficeints.mtx <- matrix(nrow = length(seq(0, 0.01, 0.0001)), ncol = 6)
+i <- 0
+for (lambda in seq(0, 0.01, 0.0001)) {
+  
+  i <- i + 1
+  opt.results <- optim(control = list(maxit=10000), method='L-BFGS-B', par=c(2.7, 7, 14, 200000), lower=0.01,
+                     fn=f_minimise, system=system, times=times, y=y, lambda=lambda)
+  
+  coefficeints.mtx[i, ] <- c(lambda, opt.results$value, opt.results$par)
+  
+}
+best_parms <- coefficeints.mtx[which.min(coefficeints.mtx[,2]), 3:ncol(coefficeints.mtx)]
+best_parms
+```
+
+
+```{r}
+state <- c(S = best_parms[4], I = 444, R = 28)
+parms <- c(R0 = best_parms[1], Ip = best_parms[2], Rp = best_parms[3], N = sum(state))
+soln <- deSolve::lsoda(y = state, times = times, func = system, parms = parms)
+```
+
+```{r}
+tail(soln)
+```
+
+```{r}
+ggplot(data = as.data.frame(soln), aes(x=time)) +
+  geom_line(aes(y=S), color="blue") +
+  geom_line(aes(y=I), color="orange") +
+  geom_line(aes(y=R), color="green")
+```
+
+
+
+
+
+```{r}
+covid19_1 <- read.csv("rawFerguson.csv")
+
+unique(covid19_1$outcome)
+
+covid19_1 %>% filter(outcome == "death") %>% nrow()
+covid19_1 %>% filter(outcome == "recovery") %>% nrow()
+covid19_1 %>% filter(outcome == "other") %>% nrow()
+
+########################################################################################################################
+library(ggplot2)
+
+covid19_2 <- read.csv("covidData_17Mar2020.csv")
+covid19_2$age <- as.numeric(covid19_2$age2)
+
+known_outcome <- filter(covid19_2, isFinalUnknown == 0)
+
+plot(density(na.omit(known_outcome$age)))
+
+## Age
+
+age <- c()
+proba_recover <- c()
+proba_die <- c()
+for(a in sort(known_outcome$age)){
+  d <- filter(known_outcome, age >= a)
+  age <- c(age, a)
+  proba_recover <- c(proba_recover, sum(d$isRecovered)/nrow(d))
+  proba_die <- c(proba_die, 1-sum(d$isRecovered)/nrow(d))
+}
+
+ggplot(data=data.frame(age=age, proba=proba_recover), aes(x=age, y=proba_recover)) +
+  geom_line() +
+  geom_smooth(method = 'loess')
+
+
+ggplot(data=data.frame(age=age, proba=proba_die), aes(x=age, y=proba_die)) +
+  geom_line() +
+  geom_smooth(method = 'loess')
+
+covid19_2$diseaseDuration
+
+## Disease duration
+
+known_outcome_2 <- filter(known_outcome, !is.na(diseaseDuration))
+
+recover_disease_duration <- filter(known_outcome_2, isRecovered == 1)
+dead_disease_duration <- filter(known_outcome_2, isRecovered == 0)
+
+plot(density(recover_disease_duration$diseaseDuration))
+plot(density(dead_disease_duration$diseaseDuration))
+
+duration <- c()
+proba_recover <- c()
+proba_die <- c()
+for(a in sort(na.omit(known_outcome_2$diseaseDuration))){
+  d <- filter(known_outcome_2, diseaseDuration >= a)
+  duration <- c(duration, a)
+  proba_recover <- c(proba_recover, sum(d$isRecovered)/nrow(d))
+  proba_die <- c(proba_die, 1-sum(d$isRecovered)/nrow(d))
+}
+
+ggplot(data=data.frame(duration=duration, proba=proba_recover), aes(x=duration, y=proba_recover)) +
+  geom_line() +
+  geom_smooth(method = 'loess')
+
+
+ggplot(data=data.frame(duration=duration, proba=proba_die), aes(x=duration, y=proba_die)) +
+  geom_line() +
+  geom_smooth(method = 'loess')
+```
+
+
+
+
